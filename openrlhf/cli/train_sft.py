@@ -20,7 +20,6 @@ from transformers.trainer import get_scheduler
 
 from openrlhf.datasets import SFTDataset
 from openrlhf.datasets.utils import blending_datasets
-from openrlhf.models import Actor
 from openrlhf.trainer.sft_trainer import SFTTrainer
 from openrlhf.utils import get_strategy, get_tokenizer
 from openrlhf.models.modeling_clara import CLaRaConfig, CLaRa
