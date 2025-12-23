@@ -49,6 +49,9 @@ LOGGING_STEPS="${LOGGING_STEPS:-1}"
 EVAL_STEPS="${EVAL_STEPS:-50}"
 SAVE_STEPS="${SAVE_STEPS:-100}"
 
+# Distributed training
+MASTER_PORT="${MASTER_PORT:-29501}"
+
 ########################################
 # Environment Setup
 ########################################
@@ -130,7 +133,7 @@ fi
 echo "Starting CLaRa training (single GPU)..."
 echo "Command: python -m ${TRAINING_CMD}"
 
-torchrun --nproc_per_node=1 --master_port=29500 -m ${TRAINING_CMD}
+torchrun --nproc_per_node=1 --master_port=${MASTER_PORT} -m ${TRAINING_CMD}
 
 echo "=============================================="
 echo "Training completed!"
