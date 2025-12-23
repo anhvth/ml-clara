@@ -16,38 +16,38 @@ CLaRa (Continuous Latent Reasoning Augmentation) uses a three-stage training app
 
 ```bash
 # Basic usage with defaults
-./train_single_gpu.sh
+bash scripts/train_single_gpu.sh
 
 # Customize model and dataset
 MODEL_PATH="mistralai/Mistral-7B-Instruct-v0.2" \
 DATASET="path/to/your/data.jsonl" \
 STAGE="stage1" \
-./train_single_gpu.sh
+bash scripts/train_single_gpu.sh
 
 # Stage 1_2 training (requires stage 1 checkpoint)
 STAGE="stage1_2" \
 PRETRAIN_CHECKPOINT="./checkpoints/stage1_model" \
-./train_single_gpu.sh
+bash scripts/train_single_gpu.sh
 ```
 
 ### 8 GPU Parallel Training (`train_8gpu.sh`)
 
 ```bash
 # Basic usage with 8 GPUs
-./train_8gpu.sh
+bash scripts/train_8gpu.sh
 
 # Customize for your setup
 MODEL_PATH="Qwen/Qwen3-14B" \
 NUM_GPUS=8 \
 BATCH_SIZE=128 \
 MICRO_BATCH_SIZE=2 \
-./train_8gpu.sh
+bash scripts/train_8gpu.sh
 
 # Multi-node training (set on each node)
 MASTER_ADDR="192.168.1.100" \
 NUM_NODES=2 \
 NODE_RANK=0 \  # 0 for master, 1 for worker
-./train_8gpu.sh
+bash scripts/train_8gpu.sh
 ```
 
 ## Configuration Options
