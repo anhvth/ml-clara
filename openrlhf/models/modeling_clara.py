@@ -443,6 +443,10 @@ class CLaRa(PreTrainedModel):
                 use_mlp=cfg.compr_use_mlp,
                 mlp_hidden_dim=cfg.compr_mlp_hidden_dim,
             )
+            # Ensure cross-encoder parameters are trainable
+            for param in self.cross_encoder_compressor.parameters():
+                param.requires_grad = True
+            print(f"[CLaRa] CrossEncoderCompressor parameters set to trainable")
         else:
             self.cross_encoder_compressor = None
 
@@ -547,10 +551,15 @@ class CLaRa(PreTrainedModel):
         """Setup adapters for training."""
         for adapter_key in self.adapter_keys:
             self.decoder.set_adapter(adapter_key)
-            print(
-                f"Adapter {adapter_key} trainable parameters: {self.num_parameters(only_trainable=True)}"
-            )
+            trainable_params = self.num_parameters(only_trainable=True)
+            print(f"Adapter {adapter_key} trainable parameters: {trainable_params}")
         self._set_all_adapters()
+        
+        # Report total trainable parameters including cross-encoder
+        if self.use_cross_encoder:
+            cross_encoder_params = sum(p.numel() for p in self.cross_encoder_compressor.parameters() if p.requires_grad)
+            total_trainable = self.num_parameters(only_trainable=True)
+            print(f"[CLaRa] Total trainable params: {total_trainable} (includes {cross_encoder_params} from CrossEncoderCompressor)")
 
     def _configure_generation_config(self):
         """Configure generation parameters."""
