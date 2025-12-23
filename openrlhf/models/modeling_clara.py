@@ -417,10 +417,10 @@ class CLaRa(PreTrainedModel):
 
         print(f"Model adapter keys: {self.adapter_keys}")
 
-        # Initialize tokenizer and resize embeddings (skip memory tokens for cross-encoder)
+        # Initialize tokenizer and resize embeddings
         self.decoder_tokenizer = self._create_decoder_tokenizer(cfg)
-        if not self.use_cross_encoder:
-            self.decoder.resize_token_embeddings(len(self.decoder_tokenizer))
+        # Resize embeddings for new tokens (both modes need this now)
+        self.decoder.resize_token_embeddings(len(self.decoder_tokenizer))
         self._configure_generation_config()
 
         # Model parameters
@@ -569,17 +569,17 @@ class CLaRa(PreTrainedModel):
         n_mem_tokens = cfg.doc_max_length // cfg.compr_rate
         existing_special_tokens = tokenizer.special_tokens_map.get("additional_special_tokens", [])
 
-        # For cross-encoder mode, skip memory token creation (no tokenizer resize needed)
+        # For cross-encoder mode, add single <MEM> token for decoder prompts
         if cfg.use_cross_encoder:
-            print("[CLaRa] Cross-encoder mode: skipping memory token creation")
-            # Add only minimal special tokens for compatibility
+            print("[CLaRa] Cross-encoder mode: using single <MEM> token for decoder")
+            # Add <MEM> token plus special tokens
             tokenizer.add_special_tokens(
-                {"additional_special_tokens": existing_special_tokens + ["<AE>", "<ENC>", "<SEP>"]}
+                {"additional_special_tokens": existing_special_tokens + ["<MEM>", "<AE>", "<ENC>", "<SEP>"]}
             )
-            # Set all expected attributes (even though mem tokens aren't used)
-            tokenizer.mem_tokens = []
-            tokenizer.mem_token_ids = []
-            tokenizer.mem_token_ids_pt = torch.LongTensor([])
+            # Set attributes - single <MEM> token repeated
+            tokenizer.mem_tokens = ["<MEM>"] * n_mem_tokens  # For prompt generation
+            tokenizer.mem_token_ids = [tokenizer.convert_tokens_to_ids("<MEM>")] * n_mem_tokens
+            tokenizer.mem_token_ids_pt = torch.LongTensor(tokenizer.mem_token_ids)
             tokenizer.ae_token = "<AE>"
             tokenizer.ae_token_id = tokenizer.convert_tokens_to_ids("<AE>")
             tokenizer.enc_token = "<ENC>"
@@ -1144,20 +1144,27 @@ class CLaRa(PreTrainedModel):
     ) -> torch.Tensor:
         """Replace memory tokens with compressed embeddings."""
         inputs_embeds = self.decoder.get_input_embeddings()(dec_input_ids)
-        
-        # Cross-encoder mode: embeddings are handled differently (no token replacement)
-        # For now, just return the decoder embeddings directly
-        # TODO: Implement proper embedding injection for cross-encoder mode
-        if self.use_cross_encoder:
-            return inputs_embeds
-
         num_embs = compressed_embs.size(1)
         slot_len = num_embs + (1 if self.sep else 0)
 
-        # Get first memory token indices
-        first_mem_token_indices = torch.argmax(
-            (dec_input_ids == self.decoder_tokenizer.mem_token_ids[0]).int(), dim=1
-        )
+        # For cross-encoder mode: need to find <MEM> token in vocab or use first mem token
+        if self.use_cross_encoder:
+            # Try to find <MEM> token ID
+            mem_token_id = self.decoder_tokenizer.convert_tokens_to_ids("<MEM>")
+            if mem_token_id == self.decoder_tokenizer.unk_token_id:
+                # If <MEM> not found, can't replace - return unchanged
+                # This shouldn't happen if tokenizer setup is correct
+                print("Warning: <MEM> token not found in tokenizer for cross-encoder mode")
+                return inputs_embeds
+            first_mem_token_indices = torch.argmax(
+                (dec_input_ids == mem_token_id).int(), dim=1
+            )
+        else:
+            # Original mode: use first memory token from list
+            first_mem_token_indices = torch.argmax(
+                (dec_input_ids == self.decoder_tokenizer.mem_token_ids[0]).int(), dim=1
+            )
+
         batch_size = inputs_embeds.size(0)
 
         # Replace with compressed embeddings
@@ -1211,11 +1218,14 @@ class CLaRa(PreTrainedModel):
         stage: str = "stage1",
     ) -> tuple[int, str]:
         """Blend prompt with memory tokens for different training stages."""
-        # Cross-encoder mode: use placeholder text instead of memory tokens
-        # The compressed embeddings will be injected differently during training
+        # For cross-encoder: still use memory token strings in prompt
+        # But these will be replaced with cross-encoder compressed embeddings (not learned token embeddings)
+        # Cross-encoder changes WHERE embeddings come from, not HOW they're used in decoder
         if self.use_cross_encoder:
-            # Use a simple placeholder that indicates where document context would be
-            docs = "[DOCUMENTS]"
+            # Use single memory token repeated (since tokenizer.mem_tokens might be empty)
+            # We'll create a placeholder token string for the prompt
+            mem_token_str = "<MEM>" + self.decoder_tokenizer.sep_token
+            docs = mem_token_str * self.generation_top_k
         else:
             mem_tokens_str = (
                 "".join(self.decoder_tokenizer.mem_tokens) + self.decoder_tokenizer.sep_token
@@ -1383,9 +1393,10 @@ class CLaRa(PreTrainedModel):
         self, query: str, answer: str = None
     ) -> tuple[int, str]:
         """Create prompt for stage 2 with selected memory tokens."""
-        # Cross-encoder mode: use placeholder text instead of memory tokens
+        # For cross-encoder: still use memory token strings in prompt (will be replaced with embeddings)
         if self.use_cross_encoder:
-            docs = "[DOCUMENTS]"
+            mem_token_str = "<MEM>" + self.decoder_tokenizer.sep_token
+            docs = mem_token_str * self.generation_top_k
         else:
             mem_tokens_str = (
                 "".join(self.decoder_tokenizer.mem_tokens) + self.decoder_tokenizer.sep_token
@@ -1888,11 +1899,6 @@ class CLaRa(PreTrainedModel):
         """Replace memory slots with compressed embeddings for reasoning."""
         device = dec_input_ids.device
         inputs_embeds = self.decoder.get_input_embeddings()(dec_input_ids)
-
-        # Cross-encoder mode: return unchanged for now
-        # TODO: Implement proper embedding injection for cross-encoder reasoning
-        if self.use_cross_encoder:
-            return inputs_embeds
 
         num_embs = compressed_embs.size(1)
         slot_len = num_embs + (1 if getattr(self, "sep", False) else 0)
