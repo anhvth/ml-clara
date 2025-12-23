@@ -705,11 +705,16 @@ class CLaRa(PreTrainedModel):
         memory_embeddings = self.cross_encoder_compressor(emb, attention_mask)
 
         # Compute MSE loss for regularization: compare pooled encoder output with compressed memory
-        # Mean-pool the encoder output
-        mask = attention_mask.unsqueeze(-1).float()
+        # Mean-pool the encoder output - ensure dtype consistency
+        mask = attention_mask.unsqueeze(-1).to(dtype=emb.dtype)
         encoder_pooled = (emb * mask).sum(dim=1) / mask.sum(dim=1).clamp(min=1e-9)
         memory_pooled = memory_embeddings.mean(dim=1)
-        mse_loss = F.mse_loss(memory_pooled, encoder_pooled, reduction="mean")
+        # Ensure both tensors have same dtype before MSE
+        mse_loss = F.mse_loss(
+            memory_pooled.to(dtype=emb.dtype), 
+            encoder_pooled.to(dtype=emb.dtype), 
+            reduction="mean"
+        )
 
         return memory_embeddings, mse_loss
 
@@ -1218,19 +1223,13 @@ class CLaRa(PreTrainedModel):
         stage: str = "stage1",
     ) -> tuple[int, str]:
         """Blend prompt with memory tokens for different training stages."""
-        # For cross-encoder: still use memory token strings in prompt
-        # But these will be replaced with cross-encoder compressed embeddings (not learned token embeddings)
-        # Cross-encoder changes WHERE embeddings come from, not HOW they're used in decoder
-        if self.use_cross_encoder:
-            # Use single memory token repeated (since tokenizer.mem_tokens might be empty)
-            # We'll create a placeholder token string for the prompt
-            mem_token_str = "<MEM>" + self.decoder_tokenizer.sep_token
-            docs = mem_token_str * self.generation_top_k
-        else:
-            mem_tokens_str = (
-                "".join(self.decoder_tokenizer.mem_tokens) + self.decoder_tokenizer.sep_token
-            )
-            docs = mem_tokens_str * self.generation_top_k
+        # Both modes use same logic: join all mem tokens + sep, repeat per document
+        # Cross-encoder: tokenizer.mem_tokens = ["<MEM>", "<MEM>", ...] (same token repeated n times)
+        # Original: tokenizer.mem_tokens = ["<MEM0>", "<MEM1>", ...] (different tokens)
+        mem_tokens_str = (
+            "".join(self.decoder_tokenizer.mem_tokens) + self.decoder_tokenizer.sep_token
+        )
+        docs = mem_tokens_str * self.generation_top_k
 
         if stage == "stage1":
             if qa_loss:
@@ -1393,15 +1392,11 @@ class CLaRa(PreTrainedModel):
         self, query: str, answer: str = None
     ) -> tuple[int, str]:
         """Create prompt for stage 2 with selected memory tokens."""
-        # For cross-encoder: still use memory token strings in prompt (will be replaced with embeddings)
-        if self.use_cross_encoder:
-            mem_token_str = "<MEM>" + self.decoder_tokenizer.sep_token
-            docs = mem_token_str * self.generation_top_k
-        else:
-            mem_tokens_str = (
-                "".join(self.decoder_tokenizer.mem_tokens) + self.decoder_tokenizer.sep_token
-            )
-            docs = mem_tokens_str * self.generation_top_k
+        # Both modes use same logic
+        mem_tokens_str = (
+            "".join(self.decoder_tokenizer.mem_tokens) + self.decoder_tokenizer.sep_token
+        )
+        docs = mem_tokens_str * self.generation_top_k
 
         prompt_system = "You are a helpful assistant. Your task is to extract relevant information from provided documents and to answer to questions as briefly as possible."
         prompt_user = f"Background:\n{docs}\n\nQuestion:{query}"
