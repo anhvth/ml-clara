@@ -1,7 +1,24 @@
 import torch
 import torch.distributed as dist
-from flash_attn.bert_padding import index_first_axis, pad_input, rearrange, unpad_input
-from flash_attn.utils.distributed import all_gather
+
+# Try to import flash_attn, but make it optional
+try:
+    from flash_attn.bert_padding import index_first_axis, pad_input, rearrange, unpad_input
+    from flash_attn.utils.distributed import all_gather
+    FLASH_ATTN_AVAILABLE = True
+except ImportError:
+    FLASH_ATTN_AVAILABLE = False
+    # Dummy implementations for when flash_attn is not available
+    def index_first_axis(*args, **kwargs):
+        raise NotImplementedError("flash_attn not available")
+    def pad_input(*args, **kwargs):
+        raise NotImplementedError("flash_attn not available")
+    def rearrange(*args, **kwargs):
+        raise NotImplementedError("flash_attn not available")
+    def unpad_input(*args, **kwargs):
+        raise NotImplementedError("flash_attn not available")
+    def all_gather(*args, **kwargs):
+        raise NotImplementedError("flash_attn not available")
 
 RING_ATTN_GROUP = None
 

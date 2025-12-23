@@ -50,7 +50,7 @@ def create_clara_config(args: argparse.Namespace) -> CLaRaConfig:
         training_form="both_separately",
         training_stage=args.stage,
         sep=True,
-        attn_implementation="flash_attention_2",
+        attn_implementation="flash_attention_2" if args.flash_attn else "eager",
         stage2_retrieval_top_n=args.stage2_retrieval_top_n,
         pure_inference=args.pure_inference,
         use_cross_encoder=getattr(args, "use_cross_encoder", False),
@@ -141,9 +141,23 @@ def setup_datasets(args: argparse.Namespace, tokenizer, strategy, model: CLaRa):
 
 def setup_training_components(args: argparse.Namespace, model: CLaRa, train_dataset, strategy):
     """Setup optimizer, scheduler and other training components."""
-    # Configure optimizer
+    # Configure optimizer with optional separate encoder/decoder learning rates
+    encoder_lr = getattr(args, 'encoder_lr', None)
+    decoder_lr = getattr(args, 'decoder_lr', None)
+    
+    # Print learning rate configuration
+    if encoder_lr is not None or decoder_lr is not None:
+        print(f"Using separate learning rates:")
+        print(f"  Encoder LR: {encoder_lr if encoder_lr is not None else args.learning_rate}")
+        print(f"  Decoder LR: {decoder_lr if decoder_lr is not None else args.learning_rate}")
+    
     optimizer = strategy.create_optimizer(
-        model, lr=args.learning_rate, betas=args.adam_betas, weight_decay=args.l2
+        model, 
+        lr=args.learning_rate, 
+        betas=args.adam_betas, 
+        weight_decay=args.l2,
+        encoder_lr=encoder_lr,
+        decoder_lr=decoder_lr
     )
 
     # Configure scheduler
@@ -319,7 +333,9 @@ def create_argument_parser() -> argparse.ArgumentParser:
     # Training configuration
     training_group = parser.add_argument_group("Training Configuration")
     training_group.add_argument("--max_epochs", type=int, default=2, help="Maximum training epochs")
-    training_group.add_argument("--learning_rate", type=float, default=5e-6, help="Learning rate")
+    training_group.add_argument("--learning_rate", type=float, default=5e-6, help="Learning rate (default for all parameters)")
+    training_group.add_argument("--encoder_lr", type=float, default=None, help="Encoder adapter learning rate (overrides learning_rate)")
+    training_group.add_argument("--decoder_lr", type=float, default=None, help="Decoder adapter learning rate (overrides learning_rate)")
     training_group.add_argument("--lr_warmup_ratio", type=float, default=0.03, help="Warmup ratio")
     training_group.add_argument(
         "--lr_scheduler", type=str, default="cosine_with_min_lr", help="Learning rate scheduler"

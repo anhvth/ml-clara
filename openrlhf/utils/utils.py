@@ -10,18 +10,27 @@ from transformers import AutoTokenizer
 
 
 def get_strategy(args):
-    from openrlhf.utils.deepspeed import DeepspeedStrategy
-
-    strategy = DeepspeedStrategy(
-        seed=getattr(args, "seed", 42),
-        full_determinism=getattr(args, "full_determinism", False),
-        max_norm=getattr(args, "max_norm", 1.0),
-        micro_train_batch_size=getattr(args, "micro_train_batch_size", 1),
-        train_batch_size=getattr(args, "train_batch_size", 128),
-        zero_stage=args.zero_stage,
-        bf16=getattr(args, "bf16", True),
-        args=args,
-    )
+    try:
+        from openrlhf.utils.deepspeed import DeepspeedStrategy
+        strategy = DeepspeedStrategy(
+            seed=getattr(args, "seed", 42),
+            full_determinism=getattr(args, "full_determinism", False),
+            max_norm=getattr(args, "max_norm", 1.0),
+            micro_train_batch_size=getattr(args, "micro_train_batch_size", 1),
+            train_batch_size=getattr(args, "train_batch_size", 128),
+            zero_stage=args.zero_stage,
+            bf16=getattr(args, "bf16", True),
+            args=args,
+        )
+    except ImportError:
+        # Fallback for environments without deepspeed (e.g., MPS)
+        from openrlhf.utils.simple_strategy import SimpleStrategy
+        strategy = SimpleStrategy(
+            seed=getattr(args, "seed", 42),
+            micro_train_batch_size=getattr(args, "micro_train_batch_size", 1),
+            train_batch_size=getattr(args, "train_batch_size", 128),
+            args=args,
+        )
     return strategy
 
 

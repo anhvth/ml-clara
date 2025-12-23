@@ -32,3 +32,4 @@ profile_default/
 checkpoints/
 wandb/
 tensorboard/
+*.log
