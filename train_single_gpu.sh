@@ -16,7 +16,7 @@ PRETRAIN_CHECKPOINT="${PRETRAIN_CHECKPOINT:-}"  # Set this for stage1_2/stage2 t
 
 # Dataset paths - Use example data by default
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DATA_PATH="${DATA_PATH:-${SCRIPT_DIR}/../example}"
+DATA_PATH="${DATA_PATH:-${SCRIPT_DIR}/example}"
 DATASET="${DATASET:-${DATA_PATH}/pretrain_data.jsonl}"
 
 # Output configuration

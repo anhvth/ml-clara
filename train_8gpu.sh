@@ -16,7 +16,7 @@ PRETRAIN_CHECKPOINT="${PRETRAIN_CHECKPOINT:-}"  # Set this for stage1_2/stage2 t
 
 # Dataset paths - Use example data by default
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DATA_PATH="${DATA_PATH:-${SCRIPT_DIR}/../example}"
+DATA_PATH="${DATA_PATH:-${SCRIPT_DIR}/example}"
 DATASET="${DATASET:-${DATA_PATH}/pretrain_data.jsonl}"
 
 # Output configuration
@@ -32,7 +32,7 @@ COMPRESS_RATE="${COMPRESS_RATE:-32}"
 GENERATION_TOP_K="${GENERATION_TOP_K:-1}"
 
 # Training hyperparameters
-MAX_EPOCHS="${MAX_EPOCHS:-1}"
+MAX_EPOCHS="${MAX_EPOCHS:-10}"
 LEARNING_RATE="${LEARNING_RATE:-1e-4}"
 BATCH_SIZE="${BATCH_SIZE:-128}"  # Global batch size (will be distributed across GPUs)
 MICRO_BATCH_SIZE="${MICRO_BATCH_SIZE:-2}"  # Per GPU batch size
@@ -67,7 +67,7 @@ NODE_RANK="${NODE_RANK:-0}"
 # Environment Setup
 ########################################
 export PYTHONPATH="${SCRIPT_DIR}/..:${PYTHONPATH}"
-export NCCL_DEBUG="${NCCL_DEBUG:-INFO}"
+export NCCL_DEBUG="${NCCL_DEBUG:-WARN}"
 export NCCL_TIMEOUT="${NCCL_TIMEOUT:-5400}"
 
 # For memory efficiency
