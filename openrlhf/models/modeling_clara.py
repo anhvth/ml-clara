@@ -1140,6 +1140,13 @@ class CLaRa(PreTrainedModel):
         self, compressed_embs: torch.Tensor, dec_input_ids: torch.Tensor, indices: range
     ) -> torch.Tensor:
         """Replace memory tokens with compressed embeddings."""
+        # Cross-encoder mode doesn't use memory tokens in decoder input
+        if self.use_cross_encoder:
+            raise NotImplementedError(
+                "Cross-encoder mode doesn't support memory token replacement. "
+                "This method should not be called in cross-encoder mode."
+            )
+
         inputs_embeds = self.decoder.get_input_embeddings()(dec_input_ids)
         num_embs = compressed_embs.size(1)
         slot_len = num_embs + (1 if self.sep else 0)
@@ -1201,6 +1208,15 @@ class CLaRa(PreTrainedModel):
         stage: str = "stage1",
     ) -> tuple[int, str]:
         """Blend prompt with memory tokens for different training stages."""
+        # Cross-encoder mode doesn't use memory tokens in prompts
+        if self.use_cross_encoder:
+            # For cross-encoder, use placeholder or different prompt format
+            # This should be handled differently or raise error if called
+            raise NotImplementedError(
+                "Cross-encoder mode doesn't support memory token prompts. "
+                "Use different prompt generation method for cross-encoder."
+            )
+
         mem_tokens_str = (
             "".join(self.decoder_tokenizer.mem_tokens) + self.decoder_tokenizer.sep_token
         )
@@ -1367,6 +1383,13 @@ class CLaRa(PreTrainedModel):
         self, query: str, answer: str = None
     ) -> tuple[int, str]:
         """Create prompt for stage 2 with selected memory tokens."""
+        # Cross-encoder mode doesn't use memory tokens in prompts
+        if self.use_cross_encoder:
+            raise NotImplementedError(
+                "Cross-encoder mode doesn't support memory token prompts. "
+                "Use different prompt generation method for cross-encoder."
+            )
+
         mem_tokens_str = (
             "".join(self.decoder_tokenizer.mem_tokens) + self.decoder_tokenizer.sep_token
         )
@@ -1866,6 +1889,13 @@ class CLaRa(PreTrainedModel):
         docs_per_example: list[int],
     ) -> torch.Tensor:
         """Replace memory slots with compressed embeddings for reasoning."""
+        # Cross-encoder mode doesn't use memory tokens
+        if self.use_cross_encoder:
+            raise NotImplementedError(
+                "Cross-encoder mode doesn't support memory token replacement. "
+                "This method should not be called in cross-encoder mode."
+            )
+
         device = dec_input_ids.device
         inputs_embeds = self.decoder.get_input_embeddings()(dec_input_ids)
 
