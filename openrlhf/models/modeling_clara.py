@@ -144,8 +144,11 @@ class CrossEncoderCompressor(nn.Module):
         self.num_memory_tokens = num_memory_tokens
         self.num_heads = num_heads
 
-        # Learnable query tokens for cross-attention
-        self.query_tokens = nn.Parameter(torch.randn(1, num_memory_tokens, hidden_size) * 0.02)
+        # Learnable query tokens for cross-attention - initialize with float32
+        # Will be converted to model's dtype (bfloat16) when model is moved to device
+        self.query_tokens = nn.Parameter(
+            torch.randn(1, num_memory_tokens, hidden_size, dtype=torch.float32) * 0.02
+        )
 
         # Multi-head cross-attention
         self.cross_attention = nn.MultiheadAttention(
@@ -183,11 +186,11 @@ class CrossEncoderCompressor(nn.Module):
             memory_embeddings: [batch, num_memory_tokens, hidden_size]
         """
         batch_size = encoder_hidden_states.size(0)
+        device = encoder_hidden_states.device
+        dtype = encoder_hidden_states.dtype
 
-        # Expand query tokens for batch
-        queries = self.query_tokens.expand(
-            batch_size, -1, -1
-        )  # [batch, num_mem_tokens, hidden_size]
+        # Expand query tokens for batch and ensure proper dtype/device
+        queries = self.query_tokens.expand(batch_size, -1, -1).to(device=device, dtype=dtype)
 
         # Create key padding mask for MHA (True = ignore, False = attend)
         key_padding_mask = None
@@ -204,8 +207,8 @@ class CrossEncoderCompressor(nn.Module):
             need_weights=False,
         )
 
-        # Apply layer norm
-        memory_embeddings = self.layer_norm(memory_embeddings)
+        # Apply layer norm and ensure output matches input dtype
+        memory_embeddings = self.layer_norm(memory_embeddings).to(dtype=dtype)
 
         return memory_embeddings
 
