@@ -3,7 +3,6 @@
 # Copyright (C) 2025 Apple Inc. All Rights Reserved.
 #
 
-from typing import List
 
 import torch
 import torch.nn.functional as F
@@ -50,7 +49,7 @@ def convert_token_to_id(token, tokenizer):
 
 
 def zero_pad_sequences(
-    sequences: List[torch.Tensor], side: str = "left", value: int = 0, stack: bool = False
+    sequences: list[torch.Tensor], side: str = "left", value: int = 0, stack: bool = False
 ) -> torch.Tensor:
     assert side in ("left", "right")
     max_len = max(seq.size(-1) for seq in sequences)
@@ -77,5 +76,5 @@ def remove_pad_token(input_ids: torch.Tensor, attention_mask: torch.Tensor):
     no_padding_batch = []
     for ids, mask in zip(input_ids, attention_mask):
         # Fix for both left and right padding
-        no_padding_batch.append((ids[mask.bool()]))
+        no_padding_batch.append(ids[mask.bool()])
     return no_padding_batch

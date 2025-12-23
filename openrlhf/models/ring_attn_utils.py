@@ -26,13 +26,17 @@ def reset_ring_attn_position_ids(start, end, packed_seq_lens):
         end: the end position
         packed_seq_lens: the sequence lengths of packed sequences
     """
-    position_ids = torch.zeros((1, end - start), dtype=torch.long, device=torch.cuda.current_device())
+    position_ids = torch.zeros(
+        (1, end - start), dtype=torch.long, device=torch.cuda.current_device()
+    )
     offset = 0
     for seqlen in packed_seq_lens:
         seq_start = max(offset, start)
         seq_end = min(offset + seqlen, end)
         if seq_start < seq_end:
-            position_ids[0, seq_start - start : seq_end - start] = torch.arange(seq_start - offset, seq_end - offset)
+            position_ids[0, seq_start - start : seq_end - start] = torch.arange(
+                seq_start - offset, seq_end - offset
+            )
 
         offset += seqlen
         if offset >= end:
@@ -54,7 +58,9 @@ def update_ring_attn_params(cu_seqlens):
     update_ring_flash_attn_params(cu_seqlens, RING_ATTN_GROUP)
 
 
-def get_tensor_in_current_ring_attn_rank(tensors: list[torch.Tensor] | torch.Tensor, ring_attn_group, pad_id):
+def get_tensor_in_current_ring_attn_rank(
+    tensors: list[torch.Tensor] | torch.Tensor, ring_attn_group, pad_id
+):
     """
     Deal with padding and slice the tensor to current ring_attn_rank.
     Args:
@@ -116,17 +122,17 @@ def unpad_and_slice_tensor(sequences, attention_mask, ring_attn_group):
     sequences = sequences.transpose(0, 1)  # (1, total_seqs)
     rolled_sequences = index_first_axis(
         rearrange(rolled_sequences.unsqueeze(-1), "b s ... -> (b s) ..."), indices
-    ).transpose(
-        0, 1
-    )  # (1, total_seqs)
+    ).transpose(0, 1)  # (1, total_seqs)
     position_ids = torch.clip(torch.cumsum(attention_mask, dim=-1) - 1, min=0, max=None)
-    position_ids = index_first_axis(rearrange(position_ids.unsqueeze(-1), "b s ... -> (b s) ..."), indices).transpose(
-        0, 1
-    )  # (1, total_seqs)
+    position_ids = index_first_axis(
+        rearrange(position_ids.unsqueeze(-1), "b s ... -> (b s) ..."), indices
+    ).transpose(0, 1)  # (1, total_seqs)
     ring_attn_pad_len = 0
     if ring_attn_group is not None:
-        (sequences, position_ids, rolled_sequences), ring_attn_pad_len = get_tensor_in_current_ring_attn_rank(
-            [sequences, position_ids, rolled_sequences], ring_attn_group, 0
+        (sequences, position_ids, rolled_sequences), ring_attn_pad_len = (
+            get_tensor_in_current_ring_attn_rank(
+                [sequences, position_ids, rolled_sequences], ring_attn_group, 0
+            )
         )
         cu_seqlens[-1] += ring_attn_pad_len
         update_ring_attn_params(cu_seqlens)
@@ -160,8 +166,12 @@ def gather_and_pad_tensor(tensor, ring_attn_group, ring_attn_pad_len, indices, b
         Padded tensor
     """
     if ring_attn_group is not None:
-        tensor = all_gather(tensor.transpose(0, 1), ring_attn_group).transpose(0, 1)  # (1, total_seqs)
+        tensor = all_gather(tensor.transpose(0, 1), ring_attn_group).transpose(
+            0, 1
+        )  # (1, total_seqs)
         if ring_attn_pad_len > 0:
             tensor = tensor[:, :-ring_attn_pad_len]
-    tensor = pad_input(tensor.transpose(0, 1), indices, batch, seqlen).squeeze(-1)  # (batch, seqlen)
+    tensor = pad_input(tensor.transpose(0, 1), indices, batch, seqlen).squeeze(
+        -1
+    )  # (batch, seqlen)
     return tensor

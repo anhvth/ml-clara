@@ -109,7 +109,13 @@ def get_eval_ds_config(
 def get_optimizer_grouped_parameters(
     model,
     weight_decay,
-    no_decay_name_list=["bias", "layer_norm.weight", "layernorm.weight", "norm.weight", "ln_f.weight"],
+    no_decay_name_list=[
+        "bias",
+        "layer_norm.weight",
+        "layernorm.weight",
+        "norm.weight",
+        "ln_f.weight",
+    ],
 ):
     optimizer_grouped_parameters = [
         {
@@ -133,7 +139,11 @@ def get_optimizer_grouped_parameters(
 
 
 def _z3_params_to_fetch(param_list):
-    return [p for p in param_list if hasattr(p, "ds_id") and p.ds_status == ZeroParamStatus.NOT_AVAILABLE]
+    return [
+        p
+        for p in param_list
+        if hasattr(p, "ds_id") and p.ds_status == ZeroParamStatus.NOT_AVAILABLE
+    ]
 
 
 def offload_deepspeed_states(model, pin_memory=True, non_blocking=True):

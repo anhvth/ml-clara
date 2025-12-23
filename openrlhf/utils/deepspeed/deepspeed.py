@@ -8,17 +8,16 @@ import shutil
 from abc import ABC
 from collections import defaultdict
 from datetime import timedelta
-from typing import List, Tuple, Union
+from typing import Union
 
 import deepspeed
 import torch
-import torch.nn as nn
-import torch.optim as optim
 import transformers
 import transformers.modeling_flash_attention_utils
 from deepspeed.ops.adam import DeepSpeedCPUAdam, FusedAdam
 from peft import PeftModel, get_peft_model_state_dict
 from torch import distributed as dist
+from torch import nn, optim
 from torch.distributed.device_mesh import init_device_mesh
 from torch.optim import Optimizer
 from torchdata.stateful_dataloader import StatefulDataLoader
@@ -27,6 +26,7 @@ from openrlhf.models import Actor
 from openrlhf.models.ring_attn_utils import get_ring_attn_group, set_ring_attn_group
 from openrlhf.utils.distributed_sampler import DistributedSampler
 from openrlhf.utils.distributed_util import torch_dist_barrier_and_cuda_sync
+
 from .deepspeed_utils import (
     _z3_params_to_fetch,
     get_eval_ds_config,
@@ -34,7 +34,7 @@ from .deepspeed_utils import (
     get_train_ds_config,
 )
 
-ModelOptimPair = Tuple[nn.Module, Optimizer]
+ModelOptimPair = tuple[nn.Module, Optimizer]
 ModelOrModelOptimPair = Union[nn.Module, ModelOptimPair]
 
 
@@ -75,7 +75,9 @@ class DeepspeedStrategy(ABC):
         self.ring_attn_size = getattr(self.args, "ring_attn_size", 1)
 
         if self.ds_tensor_parallel_size > 1:
-            assert deepspeed.version >= "0.16.4", "DeepSpeed version must be >= 0.16.4 for tensor parallel training"
+            assert deepspeed.version >= "0.16.4", (
+                "DeepSpeed version must be >= 0.16.4 for tensor parallel training"
+            )
             assert bf16, "BF16 is required for tensor parallel training"
 
         self.is_rlhf = False
@@ -105,7 +107,9 @@ class DeepspeedStrategy(ABC):
         self.world_size = dist.get_world_size()
         dp_size = self.world_size // self.ring_attn_size // self.ds_tensor_parallel_size
         self.ds_device_mesh = init_device_mesh(
-            "cuda", (dp_size, self.ring_attn_size, self.ds_tensor_parallel_size), mesh_dim_names=("dp", "sp", "tp")
+            "cuda",
+            (dp_size, self.ring_attn_size, self.ds_tensor_parallel_size),
+            mesh_dim_names=("dp", "sp", "tp"),
         )
         self.setup_ring_attn(self.ds_device_mesh)
 
@@ -145,7 +149,9 @@ class DeepspeedStrategy(ABC):
         optim = AdamOptimizer(optim_params, **kwargs)
         return optim
 
-    def backward(self, loss: torch.Tensor, model: nn.Module, optimizer: optim.Optimizer, **kwargs) -> None:
+    def backward(
+        self, loss: torch.Tensor, model: nn.Module, optimizer: optim.Optimizer, **kwargs
+    ) -> None:
         if isinstance(model, Actor):
             model = model.model
         model.backward(loss)
@@ -209,12 +215,14 @@ class DeepspeedStrategy(ABC):
 
     def prepare(
         self, *models_or_model_optim_pairs: ModelOrModelOptimPair, is_rlhf=False
-    ) -> Union[List[ModelOrModelOptimPair], ModelOrModelOptimPair]:
+    ) -> list[ModelOrModelOptimPair] | ModelOrModelOptimPair:
         ret = []
         self.is_rlhf = is_rlhf
         for arg in models_or_model_optim_pairs:
             if isinstance(arg, tuple):
-                assert len(arg) == 3, f'Expect (model, optimizer, scheduler) pair, got a tuple with size "{len(arg)}"'
+                assert len(arg) == 3, (
+                    f'Expect (model, optimizer, scheduler) pair, got a tuple with size "{len(arg)}"'
+                )
                 if arg[0] is not None:
                     ret.append(self._ds_init_train_model(*arg))
                 else:
@@ -230,7 +238,9 @@ class DeepspeedStrategy(ABC):
 
         if self.ds_tensor_parallel_size > 1:
             tp_model = deepspeed.tp_model_init(
-                model=model.model if is_actor else model, tp_size=self.ds_tensor_parallel_size, dtype=torch.bfloat16
+                model=model.model if is_actor else model,
+                tp_size=self.ds_tensor_parallel_size,
+                dtype=torch.bfloat16,
             )
             if is_actor:
                 model.model = tp_model
@@ -272,7 +282,9 @@ class DeepspeedStrategy(ABC):
 
         ds_config["train_micro_batch_size_per_gpu"] = self.micro_train_batch_size
         train_batch_size = self.train_batch_size
-        ds_config["train_batch_size"] = train_batch_size * self.ring_attn_size * self.ds_tensor_parallel_size
+        ds_config["train_batch_size"] = (
+            train_batch_size * self.ring_attn_size * self.ds_tensor_parallel_size
+        )
 
         return ds_config
 
@@ -284,7 +296,9 @@ class DeepspeedStrategy(ABC):
 
         if self.ds_tensor_parallel_size > 1:
             tp_model = deepspeed.tp_model_init(
-                model=model.model if is_actor else model, tp_size=self.ds_tensor_parallel_size, dtype=torch.bfloat16
+                model=model.model if is_actor else model,
+                tp_size=self.ds_tensor_parallel_size,
+                dtype=torch.bfloat16,
             )
             if is_actor:
                 model.model = tp_model
@@ -315,7 +329,9 @@ class DeepspeedStrategy(ABC):
             tensor_parallel_size=self.ds_tensor_parallel_size,
         )
         ds_config["train_micro_batch_size_per_gpu"] = self.micro_train_batch_size
-        ds_config["train_batch_size"] = self.train_batch_size * self.ring_attn_size * self.ds_tensor_parallel_size
+        ds_config["train_batch_size"] = (
+            self.train_batch_size * self.ring_attn_size * self.ds_tensor_parallel_size
+        )
 
         return ds_config
 
@@ -331,7 +347,9 @@ class DeepspeedStrategy(ABC):
                         else:
                             # TODO: use prefiltering for efficiency
                             params_to_fetch = _z3_params_to_fetch([param, param_ema])
-                            with deepspeed.zero.GatheredParameters(params_to_fetch, enabled=len(params_to_fetch) > 0):
+                            with deepspeed.zero.GatheredParameters(
+                                params_to_fetch, enabled=len(params_to_fetch) > 0
+                            ):
                                 data = param.data.to(device)
                                 param_ema.data.copy_((1 - beta) * data + beta * param_ema.data)
 
@@ -376,9 +394,9 @@ class DeepspeedStrategy(ABC):
             # if getattr(model_to_save.config, "tie_word_embeddings", False) and "lm_head.weight" in state_dict_keys:
             #     state_dict_keys.remove("lm_head.weight")
 
-            assert state_dict_keys.issubset(
-                output_state_dict_keys
-            ), f"mismatch keys {output_state_dict_keys.symmetric_difference(state_dict_keys)}"
+            assert state_dict_keys.issubset(output_state_dict_keys), (
+                f"mismatch keys {output_state_dict_keys.symmetric_difference(state_dict_keys)}"
+            )
 
             # only save peft weights https://github.com/microsoft/DeepSpeed/issues/4295
             if isinstance(model_to_save, PeftModel):
@@ -443,7 +461,10 @@ class DeepspeedStrategy(ABC):
                 data = torch.Tensor([data])
             is_cpu_tensor = data.device.type == "cpu"
 
-            ret = [torch.zeros_like(data).to(torch.cuda.current_device()) for _ in range(self.world_size)]
+            ret = [
+                torch.zeros_like(data).to(torch.cuda.current_device())
+                for _ in range(self.world_size)
+            ]
             dist.all_gather(ret, data.to(torch.cuda.current_device()))
             return torch.cat(ret).cpu() if is_cpu_tensor else torch.cat(ret)
 
@@ -461,7 +482,9 @@ class DeepspeedStrategy(ABC):
             return 0
         return dist.get_rank()
 
-    def save_ckpt(self, model, save_dir, tag=None, max_num=3, max_mem=1000, client_state={}, save_latest=True):
+    def save_ckpt(
+        self, model, save_dir, tag=None, max_num=3, max_mem=1000, client_state={}, save_latest=True
+    ):
         assert isinstance(model, deepspeed.DeepSpeedEngine)
         if self.is_rank_0():
             os.makedirs(save_dir, exist_ok=True)

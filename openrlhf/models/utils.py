@@ -1,5 +1,3 @@
-from typing import Optional, Tuple, Union
-
 import torch
 import torch.nn.functional as F
 
@@ -41,14 +39,13 @@ def compute_approx_kl(
 
 
 def compute_reward(
-    r: Union[torch.Tensor, float],
+    r: torch.Tensor | float,
     kl_coef: float,
-    kl: Union[torch.Tensor, list[torch.Tensor]],
-    action_mask: Optional[torch.Tensor] = None,
-    reward_clip_range: Tuple[float, float] = None,
-) -> Union[torch.Tensor, list[torch.Tensor]]:
-    if kl_coef <= 0.0:
-        kl_coef = 0.0
+    kl: torch.Tensor | list[torch.Tensor],
+    action_mask: torch.Tensor | None = None,
+    reward_clip_range: tuple[float, float] = None,
+) -> torch.Tensor | list[torch.Tensor]:
+    kl_coef = max(0.0, kl_coef)
 
     if reward_clip_range:
         r = r.clamp(min=reward_clip_range[0], max=reward_clip_range[1])
@@ -64,7 +61,9 @@ def compute_reward(
     #             break
     #
     eos_indices = action_mask.size(1) - 1 - action_mask.long().fliplr().argmax(dim=1, keepdim=True)
-    last_reward = torch.zeros_like(kl).scatter_(dim=1, index=eos_indices, src=r.unsqueeze(1).to(kl.dtype))
+    last_reward = torch.zeros_like(kl).scatter_(
+        dim=1, index=eos_indices, src=r.unsqueeze(1).to(kl.dtype)
+    )
 
     reward = last_reward + kl_reward
 
@@ -81,7 +80,9 @@ def _logsumexp_by_chunk(logits: torch.Tensor, chunk_size: int = 1024) -> torch.T
     return logsumexp_values
 
 
-def log_probs_from_logits(logits: torch.Tensor, labels: torch.Tensor, temperature: float = 1.0) -> torch.Tensor:
+def log_probs_from_logits(
+    logits: torch.Tensor, labels: torch.Tensor, temperature: float = 1.0
+) -> torch.Tensor:
     if temperature != 1.0:
         logits.div_(temperature)
     # https://github.com/OpenRLHF/OpenRLHF/pull/718#issuecomment-2641081881
@@ -97,24 +98,30 @@ def log_probs_from_logits(logits: torch.Tensor, labels: torch.Tensor, temperatur
             logits_labels = torch.gather(logits, dim=-1, index=labels.unsqueeze(-1)).squeeze(-1)
             logsumexp_values = _logsumexp_by_chunk(logits.reshape(-1, last_dim))
             logsumexp_values = logsumexp_values.view(*batch_dim)
-            log_probs_labels = logits_labels - logsumexp_values  # log_softmax(x_i) = x_i - logsumexp(x)
+            log_probs_labels = (
+                logits_labels - logsumexp_values
+            )  # log_softmax(x_i) = x_i - logsumexp(x)
     else:
         log_probs_labels = []
         for row_logits, row_labels in zip(logits, labels):  # loop to reduce peak mem consumption
             row_log_probs = F.log_softmax(row_logits, dim=-1)
-            row_log_probs_labels = row_log_probs.gather(dim=-1, index=row_labels.unsqueeze(-1)).squeeze(-1)
+            row_log_probs_labels = row_log_probs.gather(
+                dim=-1, index=row_labels.unsqueeze(-1)
+            ).squeeze(-1)
             log_probs_labels.append(row_log_probs_labels)
         log_probs_labels = torch.stack(log_probs_labels)
     return log_probs_labels
 
 
-def masked_mean(tensor: torch.Tensor, mask: Optional[torch.Tensor], dim: int = None) -> torch.Tensor:
+def masked_mean(tensor: torch.Tensor, mask: torch.Tensor | None, dim: int = None) -> torch.Tensor:
     if mask is None:
         return tensor.mean(dim=dim)
     return (tensor * mask).sum(dim=dim) / mask.sum(dim=dim)
 
 
-def masked_normalize(tensor: torch.Tensor, mask: torch.Tensor, dim: int = 1, eps: float = 1e-8) -> torch.Tensor:
+def masked_normalize(
+    tensor: torch.Tensor, mask: torch.Tensor, dim: int = 1, eps: float = 1e-8
+) -> torch.Tensor:
     tensor = tensor * mask
     mean = masked_mean(tensor, mask, dim=dim)
     mean_centered = tensor - mean

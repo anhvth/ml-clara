@@ -9,7 +9,7 @@ from datasets import interleave_datasets, load_dataset, load_from_disk
 
 
 def exist_and_not_none(d, key):
-    return key in d and not d[key] is None
+    return key in d and d[key] is not None
 
 
 def blending_datasets(
@@ -48,12 +48,13 @@ def blending_datasets(
         ext = os.path.splitext(dataset)[-1]
         # local python script
         if ext == ".py" or (
-            os.path.isdir(dataset) and os.path.exists(os.path.join(dataset, f"{dataset_basename}.py"))
+            os.path.isdir(dataset)
+            and os.path.exists(os.path.join(dataset, f"{dataset_basename}.py"))
         ):
             data = load_dataset(dataset, trust_remote_code=True)
             strategy.print(f"loaded {dataset} with python script")
         # local text file
-        print('打印数据', ext, dataset)
+        print("打印数据", ext, dataset)
         if ext in [".json", ".jsonl", ".csv", ".parquet", ".arrow"]:
             ext = ext.lower().strip(".")
             if ext == "jsonl":

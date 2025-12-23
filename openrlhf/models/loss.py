@@ -1,9 +1,7 @@
-from typing import Optional, Tuple
-
 import torch
 import torch.distributed as dist
-import torch.nn as nn
 import torch.nn.functional as F
+from torch import nn
 
 from .utils import masked_mean
 
@@ -40,7 +38,9 @@ class GPTLMLoss(nn.Module):
                 # Use mean of logits multiplied by 0 to maintain gradient flow
                 loss = shift_logits.mean() * 0
             else:
-                loss = self.loss(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
+                loss = self.loss(
+                    shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1)
+                )
 
             dist.all_reduce(loss, op=dist.ReduceOp.SUM, group=self.ring_attn_group)
             loss = loss / self.ring_attn_world_size
@@ -77,7 +77,9 @@ class PolicyLoss(nn.Module):
     Policy Loss for PPO
     """
 
-    def __init__(self, clip_eps_low: float = 0.2, clip_eps_high: float = 0.2, token_level_loss: bool = True) -> None:
+    def __init__(
+        self, clip_eps_low: float = 0.2, clip_eps_high: float = 0.2, token_level_loss: bool = True
+    ) -> None:
         super().__init__()
         self.clip_eps_low = clip_eps_low
         self.clip_eps_high = clip_eps_high
@@ -88,7 +90,7 @@ class PolicyLoss(nn.Module):
         log_probs: torch.Tensor,
         old_log_probs: torch.Tensor,
         advantages: torch.Tensor,
-        action_mask: Optional[torch.Tensor] = None,
+        action_mask: torch.Tensor | None = None,
     ) -> torch.Tensor:
         ratio = (log_probs - old_log_probs).exp()
         surr1 = ratio * advantages
@@ -118,7 +120,7 @@ class ValueLoss(nn.Module):
         values: torch.Tensor,
         old_values: torch.Tensor,
         returns: torch.Tensor,
-        action_mask: Optional[torch.Tensor] = None,
+        action_mask: torch.Tensor | None = None,
     ) -> torch.Tensor:
         if self.clip_eps is not None:
             values_clipped = old_values + (values - old_values).clamp(-self.clip_eps, self.clip_eps)
@@ -181,13 +183,15 @@ class DPOLoss(nn.Module):
         policy_rejected_logps: torch.Tensor,
         reference_chosen_logps: torch.Tensor,
         reference_rejected_logps: torch.Tensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         pi_logratios = policy_chosen_logps - policy_rejected_logps
         ref_logratios = reference_chosen_logps - reference_rejected_logps
         logits = pi_logratios - ref_logratios
 
         if self.ipo:
-            losses = (logits - 1 / (2 * self.beta)) ** 2  # Eq. 17 of https://arxiv.org/pdf/2310.12036v2.pdf
+            losses = (
+                logits - 1 / (2 * self.beta)
+            ) ** 2  # Eq. 17 of https://arxiv.org/pdf/2310.12036v2.pdf
         else:
             # Eq. 3 https://ericmitchell.ai/cdpo.pdf; label_smoothing=0 gives original DPO (Eq. 7 of https://arxiv.org/pdf/2305.18290.pdf)
             losses = (
@@ -218,7 +222,7 @@ class VanillaKTOLoss(nn.Module):
         policy_rejected_logps: torch.FloatTensor,
         reference_chosen_logps: torch.FloatTensor,
         reference_rejected_logps: torch.FloatTensor,
-    ) -> Tuple[torch.FloatTensor, torch.FloatTensor, torch.FloatTensor]:
+    ) -> tuple[torch.FloatTensor, torch.FloatTensor, torch.FloatTensor]:
         chosen_KL = (policy_chosen_logps - reference_chosen_logps).mean().clamp(min=0)
         rejected_KL = (policy_rejected_logps - reference_rejected_logps).mean().clamp(min=0)
 
@@ -245,7 +249,12 @@ class KTOLoss(nn.Module):
     """
 
     def __init__(
-        self, beta: float, desirable_weight: float, undesirable_weight: float, world_size: int, device: torch.device
+        self,
+        beta: float,
+        desirable_weight: float,
+        undesirable_weight: float,
+        world_size: int,
+        device: torch.device,
     ) -> None:
         super().__init__()
         self.beta = beta
@@ -262,7 +271,7 @@ class KTOLoss(nn.Module):
         reference_chosen_logps: torch.FloatTensor,
         reference_rejected_logps: torch.FloatTensor,
         reference_KL_logps: torch.FloatTensor,
-    ) -> Tuple[torch.FloatTensor, torch.FloatTensor, torch.FloatTensor]:
+    ) -> tuple[torch.FloatTensor, torch.FloatTensor, torch.FloatTensor]:
         KL = (policy_KL_logps - reference_KL_logps).mean().detach()
         # all_reduce sums up the KL estimates across all devices (gradient will also be scaled by world size)
         dist.all_reduce(KL, op=dist.ReduceOp.SUM)
@@ -303,7 +312,9 @@ class KDLoss(nn.Module):
         super().__init__()
         self.IGNORE_INDEX = -100
 
-    def forward(self, logits: torch.Tensor, teacher_logits: torch.Tensor, label: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self, logits: torch.Tensor, teacher_logits: torch.Tensor, label: torch.Tensor
+    ) -> torch.Tensor:
         teacher_probs = F.softmax(teacher_logits, dim=-1, dtype=torch.float32)
         inf_mask = torch.isinf(logits)
         logprobs = F.log_softmax(logits, dim=-1, dtype=torch.float32)
@@ -320,21 +331,30 @@ class PRMLoss(nn.Module):
     Process Reward Model Loss
     """
 
-    def __init__(self, placeholder_token_id: int, reward_token_ids: Optional[list[int]] = None):
+    def __init__(self, placeholder_token_id: int, reward_token_ids: list[int] | None = None):
         super().__init__()
         self.IGNORE_INDEX = -100
         self.loss = nn.CrossEntropyLoss(ignore_index=self.IGNORE_INDEX)
         self.placeholder_token_id = placeholder_token_id
         self.reward_token_ids = reward_token_ids
 
-    def forward(self, inputs: torch.Tensor, logits: torch.Tensor, labels: torch.Tensor, *, return_acc: bool = False):
+    def forward(
+        self,
+        inputs: torch.Tensor,
+        logits: torch.Tensor,
+        labels: torch.Tensor,
+        *,
+        return_acc: bool = False,
+    ):
         placeholder_mask = inputs == self.placeholder_token_id
         logits = logits[placeholder_mask].squeeze(1)
         labels = labels[placeholder_mask]
 
         if labels.dtype == torch.float:
             # soft label
-            assert len(self.reward_token_ids) == 2, "reward_token_ids should have 2 tokens for soft labels"
+            assert len(self.reward_token_ids) == 2, (
+                "reward_token_ids should have 2 tokens for soft labels"
+            )
             logits = logits[..., self.reward_token_ids]
             positive_labels = labels.to(logits.dtype)
             negative_labels = 1 - positive_labels

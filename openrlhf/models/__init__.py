@@ -20,15 +20,15 @@ from .loss import (
 
 __all__ = [
     "Actor",
-    "SFTLoss",
     "DPOLoss",
     "GPTLMLoss",
     "KDLoss",
     "KTOLoss",
     "LogExpLoss",
+    "PRMLoss",
     "PairWiseLoss",
     "PolicyLoss",
-    "PRMLoss",
+    "SFTLoss",
     "ValueLoss",
     "VanillaKTOLoss",
 ]

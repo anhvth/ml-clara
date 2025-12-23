@@ -1,10 +1,8 @@
-from typing import Optional
-
 import torch
 import torch.distributed as dist
-import torch.nn as nn
 from peft import LoraConfig, TaskType, get_peft_model
 from peft.tuners.lora import LoraLayer
+from torch import nn
 from transformers import AutoModelForCausalLM, BitsAndBytesConfig
 from transformers.integrations.deepspeed import HfDeepSpeedConfig
 
@@ -133,21 +131,21 @@ class Actor(nn.Module):
     def forward(
         self,
         sequences: torch.LongTensor,
-        action_mask: Optional[torch.Tensor] = None,
-        attention_mask: Optional[torch.Tensor] = None,
+        action_mask: torch.Tensor | None = None,
+        attention_mask: torch.Tensor | None = None,
         return_output=False,
         allgather_logits=False,
         return_logprobs=False,
-        ring_attn_group: Optional[dist.ProcessGroup] = None,
-        packed_seq_lens: Optional[list[int]] = None,
+        ring_attn_group: dist.ProcessGroup | None = None,
+        packed_seq_lens: list[int] | None = None,
         return_entropy=False,
     ) -> torch.Tensor:
         """Returns action log probs"""
         batch, seqlen = sequences.size()
         foward_attention_mask = attention_mask
         if self.packing_samples:
-            sequences, position_ids, rolled_sequences, ring_attn_pad_len, indices = unpad_and_slice_tensor(
-                sequences, attention_mask, ring_attn_group
+            sequences, position_ids, rolled_sequences, ring_attn_pad_len, indices = (
+                unpad_and_slice_tensor(sequences, attention_mask, ring_attn_group)
             )
             foward_attention_mask = None
         else:
@@ -156,7 +154,9 @@ class Actor(nn.Module):
             position_ids = attention_mask.long().cumsum(-1) - 1
             position_ids.masked_fill_(attention_mask == 0, 1)
 
-        output = self.model(sequences, attention_mask=foward_attention_mask, position_ids=position_ids)
+        output = self.model(
+            sequences, attention_mask=foward_attention_mask, position_ids=position_ids
+        )
         # https://github.com/OpenRLHF/OpenRLHF/pull/634
         output["logits"] = output["logits"].to(torch.float32)
 
@@ -164,8 +164,10 @@ class Actor(nn.Module):
             assert return_output
             entropy = compute_entropy(output["logits"])
             if self.packing_samples:
-                entropy = gather_and_pad_tensor(entropy, ring_attn_group, ring_attn_pad_len, indices, batch, seqlen)
-            setattr(output, "entropy", entropy[:, :-1])
+                entropy = gather_and_pad_tensor(
+                    entropy, ring_attn_group, ring_attn_pad_len, indices, batch, seqlen
+                )
+            output.entropy = entropy[:, :-1]
 
         return_action_log_probs = action_mask is not None
         if not return_action_log_probs and not return_logprobs:
@@ -176,10 +178,14 @@ class Actor(nn.Module):
                 )
             return output
 
-        log_probs = log_probs_from_logits(output["logits"], rolled_sequences, temperature=self.temperature)
+        log_probs = log_probs_from_logits(
+            output["logits"], rolled_sequences, temperature=self.temperature
+        )
 
         if self.packing_samples:
-            log_probs = gather_and_pad_tensor(log_probs, ring_attn_group, ring_attn_pad_len, indices, batch, seqlen)
+            log_probs = gather_and_pad_tensor(
+                log_probs, ring_attn_group, ring_attn_pad_len, indices, batch, seqlen
+            )
 
         log_probs = log_probs[:, :-1]
         if not return_action_log_probs and return_logprobs:
@@ -190,7 +196,9 @@ class Actor(nn.Module):
         return (action_log_probs, output) if return_output else action_log_probs
 
     def gradient_checkpointing_enable(self, gradient_checkpointing_kwargs={"use_reentrant": False}):
-        self.model.gradient_checkpointing_enable(gradient_checkpointing_kwargs=gradient_checkpointing_kwargs)
+        self.model.gradient_checkpointing_enable(
+            gradient_checkpointing_kwargs=gradient_checkpointing_kwargs
+        )
 
     def gradient_checkpointing_disable(self):
         self.model.gradient_checkpointing_disable()
