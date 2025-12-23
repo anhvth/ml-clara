@@ -1,8 +1,8 @@
 #!/bin/bash
 #
-# CLaRa Training Script - 8 GPU Parallel
-# Based on the official CLaRa paper implementation
-# With color-coded confidence debug output feature
+# CLaRa Training Script - 8 GPU Parallel with Cross-Encoder
+# Uses MHA-based cross-encoder instead of memory tokens
+# No tokenizer vocabulary resize needed
 #
 
 set -ex
@@ -20,7 +20,7 @@ DATA_PATH="${DATA_PATH:-${SCRIPT_DIR}/example}"
 DATASET="${DATASET:-${DATA_PATH}/pretrain_data.jsonl}"
 
 # Output configuration
-SAVE_MODEL_NAME="${SAVE_MODEL_NAME:-clara_8gpu}"
+SAVE_MODEL_NAME="${SAVE_MODEL_NAME:-clara_8gpu_cross_encoder}"
 SAVE_PATH="${SAVE_PATH:-./checkpoints/${SAVE_MODEL_NAME}}"
 
 # Training stage: stage1, stage1_2, stage2, stage2_reasoning
@@ -95,7 +95,7 @@ WORLD_SIZE=$((NUM_GPUS * NUM_NODES))
 # Print configuration
 ########################################
 echo "=============================================="
-echo "CLaRa Training Configuration (8 GPU Parallel)"
+echo "CLaRa Training Configuration (Cross-Encoder)"
 echo "=============================================="
 echo "Model: ${MODEL_PATH}"
 echo "Stage: ${STAGE}"
@@ -104,6 +104,7 @@ echo "Save path: ${SAVE_PATH}"
 echo "Compress rate: ${COMPRESS_RATE}"
 echo "Doc max length: ${DOC_MAX_LENGTH}"
 echo "Debug mode: ${DEBUG_MODE}"
+echo "Cross-Encoder: ENABLED (MHA-based, no memory tokens)"
 echo "----------------------------------------------"
 echo "Number of GPUs: ${NUM_GPUS}"
 echo "Number of nodes: ${NUM_NODES}"
@@ -139,7 +140,8 @@ TRAINING_CMD="openrlhf.cli.train_sft \
     --bf16 \
     --flash_attn \
     --gradient_checkpointing \
-    --use_tensorboard ${TENSORBOARD_DIR}"
+    --use_tensorboard ${TENSORBOARD_DIR} \
+    --use_cross_encoder"
 
 # Add stage-specific flags
 if [ "$STAGE" = "stage1" ]; then
@@ -176,7 +178,7 @@ DISTRIBUTED_ARGS="--nproc_per_node ${NUM_GPUS} \
 ########################################
 # Run training
 ########################################
-echo "Starting CLaRa training (${NUM_GPUS} GPUs)..."
+echo "Starting CLaRa training with Cross-Encoder (${NUM_GPUS} GPUs)..."
 echo "Distributed args: ${DISTRIBUTED_ARGS}"
 
 if [ $NUM_NODES -gt 1 ]; then

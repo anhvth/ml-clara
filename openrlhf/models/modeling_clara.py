@@ -121,6 +121,95 @@ class Converter(nn.Module):
         return x.to(torch.float32)
 
 
+class CrossEncoderCompressor(nn.Module):
+    """Cross-encoder compressor module that compresses documents via multi-head attention.
+
+    Unlike memory tokens, this approach:
+    - Does not require tokenizer vocabulary extension
+    - Uses learnable query tokens that attend to encoder hidden states via MHA
+    - Projects to num_memory_tokens embeddings through cross-attention
+    """
+
+    def __init__(
+        self,
+        hidden_size: int,
+        num_memory_tokens: int = 32,
+        num_heads: int = 8,
+        dropout: float = 0.1,
+        use_mlp: bool = True,  # Kept for API compatibility, ignored
+        mlp_hidden_dim: int | None = None,  # Kept for API compatibility, ignored
+    ):
+        super().__init__()
+        self.hidden_size = hidden_size
+        self.num_memory_tokens = num_memory_tokens
+        self.num_heads = num_heads
+
+        # Learnable query tokens for cross-attention
+        self.query_tokens = nn.Parameter(torch.randn(1, num_memory_tokens, hidden_size) * 0.02)
+
+        # Multi-head cross-attention
+        self.cross_attention = nn.MultiheadAttention(
+            embed_dim=hidden_size,
+            num_heads=num_heads,
+            dropout=dropout,
+            batch_first=True,
+        )
+
+        # Layer norm for output
+        self.layer_norm = nn.LayerNorm(hidden_size)
+
+        self._print_trainable_parameters()
+
+    def _print_trainable_parameters(self):
+        """Print parameter statistics."""
+        trainable_params = sum(p.numel() for p in self.parameters() if p.requires_grad)
+        total_params = sum(p.numel() for p in self.parameters())
+        print(
+            f"CrossEncoderCompressor (MHA) trainable params: {trainable_params}, Total: {total_params}"
+        )
+
+    def forward(
+        self,
+        encoder_hidden_states: torch.Tensor,
+        attention_mask: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """Compress encoder outputs to memory token embeddings via cross-attention.
+
+        Args:
+            encoder_hidden_states: [batch, seq_len, hidden_size] from encoder
+            attention_mask: [batch, seq_len] (1=token, 0=pad). Optional.
+
+        Returns:
+            memory_embeddings: [batch, num_memory_tokens, hidden_size]
+        """
+        batch_size = encoder_hidden_states.size(0)
+
+        # Expand query tokens for batch
+        queries = self.query_tokens.expand(
+            batch_size, -1, -1
+        )  # [batch, num_mem_tokens, hidden_size]
+
+        # Create key padding mask for MHA (True = ignore, False = attend)
+        key_padding_mask = None
+        if attention_mask is not None:
+            key_padding_mask = attention_mask == 0  # [batch, seq_len]
+
+        # Cross-attention: queries attend to encoder hidden states
+        # Q: learnable query tokens, K/V: encoder hidden states
+        memory_embeddings, _ = self.cross_attention(
+            query=queries,
+            key=encoder_hidden_states,
+            value=encoder_hidden_states,
+            key_padding_mask=key_padding_mask,
+            need_weights=False,
+        )
+
+        # Apply layer norm
+        memory_embeddings = self.layer_norm(memory_embeddings)
+
+        return memory_embeddings
+
+
 class CLaRaConfig(PretrainedConfig):
     """Configuration class for CLaRa model."""
 
@@ -159,6 +248,7 @@ class CLaRaConfig(PretrainedConfig):
         stage2_retrieval_top_n: int = 1,
         load_pretrained_checkpoint: bool = False,
         device_map=None,
+        use_cross_encoder: bool = False,
         auto_map: dict = {
             "AutoConfig": "modeling_clara.CLaRaConfig",
             "AutoModel": "modeling_clara.CLaRa",
@@ -166,6 +256,7 @@ class CLaRaConfig(PretrainedConfig):
         **kwargs,
     ):
         super().__init__(**kwargs)
+        self.use_cross_encoder = use_cross_encoder
 
         self.decoder_model_name = decoder_model_name
         self.doc_max_length = doc_max_length
@@ -306,6 +397,7 @@ class CLaRa(PreTrainedModel):
         self.decoder_model_name = cfg.decoder_model_name
         self.decoder = self._create_decoder(cfg)
         self.doc_max_length = cfg.doc_max_length
+        self.use_cross_encoder = cfg.use_cross_encoder
 
         print(f"Base decoder parameters: {self.decoder.num_parameters()}")
 
@@ -322,9 +414,10 @@ class CLaRa(PreTrainedModel):
 
         print(f"Model adapter keys: {self.adapter_keys}")
 
-        # Initialize tokenizer and resize embeddings
+        # Initialize tokenizer and resize embeddings (skip memory tokens for cross-encoder)
         self.decoder_tokenizer = self._create_decoder_tokenizer(cfg)
-        self.decoder.resize_token_embeddings(len(self.decoder_tokenizer))
+        if not self.use_cross_encoder:
+            self.decoder.resize_token_embeddings(len(self.decoder_tokenizer))
         self._configure_generation_config()
 
         # Model parameters
@@ -338,13 +431,26 @@ class CLaRa(PreTrainedModel):
         self.n_mem_tokens = self.doc_max_length // self.compr_rate
         self.hidden_size = self.decoder.config.hidden_size
 
+        # Initialize cross-encoder compressor if enabled
+        if self.use_cross_encoder:
+            print("[CLaRa] Using CrossEncoderCompressor instead of memory tokens")
+            self.cross_encoder_compressor = CrossEncoderCompressor(
+                hidden_size=self.hidden_size,
+                num_memory_tokens=self.n_mem_tokens,
+                use_mlp=cfg.compr_use_mlp,
+                mlp_hidden_dim=cfg.compr_mlp_hidden_dim,
+            )
+        else:
+            self.cross_encoder_compressor = None
+
         # Setup adapters and memory token optimization
         if self.lora:
             self._setup_adapter_training()
         else:
             print(f"Total trainable parameters: {self.num_parameters(only_trainable=True)}")
 
-        self._prepare_mem_tokens_optimization()
+        if not self.use_cross_encoder:
+            self._prepare_mem_tokens_optimization()
 
         # Retrieval configuration
         self.url_retrieval = "http://127.0.0.1:5004/queries"
@@ -460,7 +566,20 @@ class CLaRa(PreTrainedModel):
         n_mem_tokens = cfg.doc_max_length // cfg.compr_rate
         existing_special_tokens = tokenizer.special_tokens_map.get("additional_special_tokens", [])
 
-        if cfg.different_mem_tokens:
+        # For cross-encoder mode, skip memory token creation (no tokenizer resize needed)
+        if cfg.use_cross_encoder:
+            print("[CLaRa] Cross-encoder mode: skipping memory token creation")
+            # Add only minimal special tokens (SEP for compatibility)
+            tokenizer.add_special_tokens(
+                {"additional_special_tokens": existing_special_tokens + ["<SEP>"]}
+            )
+            tokenizer.sep_token = "<SEP>"
+            tokenizer.sep_token_id = tokenizer.convert_tokens_to_ids("<SEP>")
+            # Create dummy mem_tokens for compatibility (not used in actual compression)
+            tokenizer.mem_tokens = []
+            tokenizer.mem_token_ids = []
+            tokenizer.mem_token_ids_pt = torch.LongTensor([])
+        elif cfg.different_mem_tokens:
             mem_tokens = [f"<MEM{i}>" for i in range(n_mem_tokens)]
             tokenizer.add_special_tokens(
                 {
@@ -470,6 +589,15 @@ class CLaRa(PreTrainedModel):
                 }
             )
             tokenizer.mem_tokens = mem_tokens
+            tokenizer.mem_token_ids = [
+                tokenizer.convert_tokens_to_ids(token) for token in tokenizer.mem_tokens
+            ]
+            tokenizer.mem_token_ids_pt = torch.LongTensor(tokenizer.mem_token_ids)
+            tokenizer.ae_token = "<AE>"
+            tokenizer.ae_token_id = tokenizer.convert_tokens_to_ids("<AE>")
+            tokenizer.enc_token = "<ENC>"
+            tokenizer.sep_token = "<SEP>"
+            tokenizer.sep_token_id = tokenizer.convert_tokens_to_ids("<SEP>")
         else:
             tokenizer.add_special_tokens(
                 {
@@ -478,18 +606,15 @@ class CLaRa(PreTrainedModel):
                 }
             )
             tokenizer.mem_tokens = ["<MEM>"] * n_mem_tokens
-
-        tokenizer.mem_token_ids = [
-            tokenizer.convert_tokens_to_ids(token) for token in tokenizer.mem_tokens
-        ]
-        tokenizer.mem_token_ids_pt = torch.LongTensor(tokenizer.mem_token_ids)
-
-        # Additional special tokens
-        tokenizer.ae_token = "<AE>"
-        tokenizer.ae_token_id = tokenizer.convert_tokens_to_ids("<AE>")
-        tokenizer.enc_token = "<ENC>"
-        tokenizer.sep_token = "<SEP>"
-        tokenizer.sep_token_id = tokenizer.convert_tokens_to_ids("<SEP>")
+            tokenizer.mem_token_ids = [
+                tokenizer.convert_tokens_to_ids(token) for token in tokenizer.mem_tokens
+            ]
+            tokenizer.mem_token_ids_pt = torch.LongTensor(tokenizer.mem_token_ids)
+            tokenizer.ae_token = "<AE>"
+            tokenizer.ae_token_id = tokenizer.convert_tokens_to_ids("<AE>")
+            tokenizer.enc_token = "<ENC>"
+            tokenizer.sep_token = "<SEP>"
+            tokenizer.sep_token_id = tokenizer.convert_tokens_to_ids("<SEP>")
 
         # Handle model-specific tokens
         if tokenizer.bos_token is None and "qwen" in cfg.decoder_model_name.lower():
@@ -549,13 +674,43 @@ class CLaRa(PreTrainedModel):
         """Compress input documents."""
         if self.compr:
             return self.compr(enc_input_ids, enc_attention_mask)
+        elif self.use_cross_encoder:
+            return self._compr_cross_encoder(enc_input_ids, enc_attention_mask)
         else:
             return self._compr_decoder(enc_input_ids, enc_attention_mask)
+
+    def _compr_cross_encoder(
+        self, input_ids: torch.Tensor, attention_mask: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Use cross-encoder compressor (MHA-based cross-attention)."""
+        assert input_ids.size() == attention_mask.size()
+
+        if "encoder_adapter" in self.adapter_keys:
+            self.decoder.set_adapter("encoder_adapter")
+        else:
+            raise ValueError(f"encoder_adapter not in adapter_keys: {self.adapter_keys}")
+
+        # Get embeddings from decoder (no memory tokens in input)
+        emb = self.decoder(
+            input_ids=input_ids, attention_mask=attention_mask, output_hidden_states=True
+        ).hidden_states[-1]
+
+        # Compress via cross-encoder MHA (learnable queries attend to encoder states)
+        memory_embeddings = self.cross_encoder_compressor(emb, attention_mask)
+
+        # Compute MSE loss for regularization: compare pooled encoder output with compressed memory
+        # Mean-pool the encoder output
+        mask = attention_mask.unsqueeze(-1).float()
+        encoder_pooled = (emb * mask).sum(dim=1) / mask.sum(dim=1).clamp(min=1e-9)
+        memory_pooled = memory_embeddings.mean(dim=1)
+        mse_loss = F.mse_loss(memory_pooled, encoder_pooled, reduction="mean")
+
+        return memory_embeddings, mse_loss
 
     def _compr_decoder(
         self, input_ids: torch.Tensor, attention_mask: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Use decoder as compressor."""
+        """Use decoder as compressor (original memory token approach)."""
         assert input_ids.size() == attention_mask.size()
 
         if "encoder_adapter" in self.adapter_keys:

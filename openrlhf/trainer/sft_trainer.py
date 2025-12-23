@@ -369,6 +369,9 @@ class SFTTrainer(ABC):
         return {
             "loss_sum": 0.0,
             "mse_loss_sum": 0.0,
+            "ce_loss_sum": 0.0,
+            "token_acc_sum": 0.0,
+            "metric_samples": 0.0,
             "retrieval_recall_1": 0.0,
             "retrieval_recall_3": 0.0,
             "retrieval_recall_5": 0.0,
@@ -387,6 +390,9 @@ class SFTTrainer(ABC):
     ) -> dict[str, float]:
         """Calculate metrics for a single training step."""
         step_metrics = {
+            "ce_loss_sum": 0.0,
+            "token_acc_sum": 0.0,
+            "metric_samples": 0.0,
             "retrieval_recall_1": 0.0,
             "retrieval_recall_3": 0.0,
             "retrieval_recall_5": 0.0,
@@ -395,6 +401,42 @@ class SFTTrainer(ABC):
             "retrieval_precision_5": 0.0,
             "retrieval_samples": 0.0,
         }
+
+        # Calculate CE loss and token accuracy
+        if "logits" in outputs and "labels" in batch:
+            try:
+                import torch.nn.functional as F
+
+                logits = outputs["logits"]
+                labels = batch["labels"]
+
+                # Handle batch of logits
+                if isinstance(logits, torch.Tensor) and logits.dim() >= 2:
+                    # Shift logits and labels for next token prediction
+                    shifted_logits = logits[..., :-1, :].contiguous()
+                    shifted_labels = labels[..., 1:].contiguous()
+
+                    # Calculate CE loss only on non-padded tokens (labels != -100)
+                    mask = shifted_labels != -100
+                    if mask.any():
+                        flat_logits = shifted_logits.view(-1, shifted_logits.size(-1))
+                        flat_labels = shifted_labels.view(-1)
+                        valid_mask = flat_labels != -100
+
+                        if valid_mask.any():
+                            ce_loss = F.cross_entropy(
+                                flat_logits[valid_mask], flat_labels[valid_mask], reduction="mean"
+                            )
+                            step_metrics["ce_loss_sum"] = ce_loss.item()
+
+                            # Calculate token accuracy
+                            predictions = flat_logits[valid_mask].argmax(dim=-1)
+                            correct = (predictions == flat_labels[valid_mask]).float()
+                            step_metrics["token_acc_sum"] = correct.mean().item()
+                            step_metrics["metric_samples"] = 1.0
+            except Exception:
+                # Silently skip if calculation fails
+                pass
 
         # Calculate retrieval metrics for stage2
         if "stage2" in self.args.stage and "topk_idx" in outputs:
@@ -444,6 +486,15 @@ class SFTTrainer(ABC):
             "mse_loss": training_metrics["mse_loss_sum"] / self.strategy.accumulated_gradient,
             "lr": self.scheduler.get_last_lr()[0],
         }
+
+        # Add CE loss and token accuracy if available
+        if training_metrics["metric_samples"] > 0:
+            logs_dict["ce_loss"] = (
+                training_metrics["ce_loss_sum"] / training_metrics["metric_samples"]
+            )
+            logs_dict["token_acc"] = (
+                training_metrics["token_acc_sum"] / training_metrics["metric_samples"]
+            )
 
         # Add retrieval metrics
         if training_metrics["retrieval_samples"] > 0:

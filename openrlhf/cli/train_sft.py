@@ -32,14 +32,18 @@ def create_clara_config(args: argparse.Namespace) -> CLaRaConfig:
         compr_rate=args.compress_rate,
         doc_max_length=args.doc_max_length,
         compr_n_layers=5,
-        compr_use_mlp=False,
+        compr_use_mlp=getattr(args, "compr_use_mlp", True),  # MLP for cross-encoder
         compr_model_name=None,
         lora=True,  # LoRA on decoder and compressor
         lora_compressor=False,  # For BERT-style compressors only
         load_adapters=True,
         kbtc_training=False,
-        optimize_mem_tokens=True,
-        different_mem_tokens=True,
+        optimize_mem_tokens=not getattr(
+            args, "use_cross_encoder", False
+        ),  # Disable for cross-encoder
+        different_mem_tokens=not getattr(
+            args, "use_cross_encoder", False
+        ),  # Disable for cross-encoder
         generation_top_k=args.generation_top_k,
         device_map=None,
         lora_r=16,
@@ -49,6 +53,7 @@ def create_clara_config(args: argparse.Namespace) -> CLaRaConfig:
         attn_implementation="flash_attention_2",
         stage2_retrieval_top_n=args.stage2_retrieval_top_n,
         pure_inference=args.pure_inference,
+        use_cross_encoder=getattr(args, "use_cross_encoder", False),
     )
 
 
@@ -273,6 +278,19 @@ def create_argument_parser() -> argparse.ArgumentParser:
     )
     clara_group.add_argument(
         "--do_eval_gen", action="store_true", default=False, help="Evaluate generation during eval"
+    )
+    clara_group.add_argument(
+        "--use_cross_encoder",
+        action="store_true",
+        default=False,
+        help="Use cross-encoder compressor (MLP-based pooling) instead of memory tokens. "
+        "This avoids tokenizer vocabulary resize and uses trainable MLP for compression.",
+    )
+    clara_group.add_argument(
+        "--compr_use_mlp",
+        action="store_true",
+        default=True,
+        help="Use MLP (vs linear) projection in cross-encoder compressor",
     )
 
     # Checkpoint and saving
