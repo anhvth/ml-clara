@@ -1106,10 +1106,11 @@ class CLaRa(PreTrainedModel):
                 add_special_tokens=False,
             )
 
+        # For cross-encoder mode, don't add memory tokens (MHA compressor doesn't need them)
+        if self.use_cross_encoder:
+            return inp_enc
+
         num_mem_tokens = self.doc_max_length // self.compr_rate
-    
-    # Skip memory token addition for cross-encoder mode
-    if not self.use_cross_encoder:
         assert num_mem_tokens == len(self.decoder_tokenizer.mem_tokens)
 
         inp_enc["input_ids"], inp_enc["attention_mask"] = add_memory_tokens_to_inputs(
@@ -1118,6 +1119,10 @@ class CLaRa(PreTrainedModel):
             num_mem_tokens,
             tokenizer=self.decoder_tokenizer,
         )
+
+        return inp_enc
+
+    def _replace_emb(
         self, compressed_embs: torch.Tensor, dec_input_ids: torch.Tensor
     ) -> torch.Tensor:
         """Replace memory tokens in decoder input with compressed embeddings."""
