@@ -569,16 +569,19 @@ class CLaRa(PreTrainedModel):
         # For cross-encoder mode, skip memory token creation (no tokenizer resize needed)
         if cfg.use_cross_encoder:
             print("[CLaRa] Cross-encoder mode: skipping memory token creation")
-            # Add only minimal special tokens (SEP for compatibility)
+            # Add only minimal special tokens for compatibility
             tokenizer.add_special_tokens(
-                {"additional_special_tokens": existing_special_tokens + ["<SEP>"]}
+                {"additional_special_tokens": existing_special_tokens + ["<AE>", "<ENC>", "<SEP>"]}
             )
-            tokenizer.sep_token = "<SEP>"
-            tokenizer.sep_token_id = tokenizer.convert_tokens_to_ids("<SEP>")
-            # Create dummy mem_tokens for compatibility (not used in actual compression)
+            # Set all expected attributes (even though mem tokens aren't used)
             tokenizer.mem_tokens = []
             tokenizer.mem_token_ids = []
             tokenizer.mem_token_ids_pt = torch.LongTensor([])
+            tokenizer.ae_token = "<AE>"
+            tokenizer.ae_token_id = tokenizer.convert_tokens_to_ids("<AE>")
+            tokenizer.enc_token = "<ENC>"
+            tokenizer.sep_token = "<SEP>"
+            tokenizer.sep_token_id = tokenizer.convert_tokens_to_ids("<SEP>")
         elif cfg.different_mem_tokens:
             mem_tokens = [f"<MEM{i}>" for i in range(n_mem_tokens)]
             tokenizer.add_special_tokens(
