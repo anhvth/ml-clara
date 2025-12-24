@@ -1964,15 +1964,16 @@ class CLaRa(PreTrainedModel):
 
         assert enc_input_ids.size(0) == dec_input_ids.size(0) * self.generation_top_k
 
-        compressed_embs, _ = self.compress(enc_input_ids.to("cuda"), enc_attention_mask.to("cuda"))
-        inputs_embeds = self._replace_emb(compressed_embs, dec_input_ids.to("cuda"))
+        device = next(self.decoder.parameters()).device
+        compressed_embs, _ = self.compress(enc_input_ids.to(device), enc_attention_mask.to(device))
+        inputs_embeds = self._replace_emb(compressed_embs, dec_input_ids.to(device))
 
         if "decoder_adapter" in self.adapter_keys:
             self.decoder.set_adapter("decoder_adapter")
 
         output_ids = self.decoder.generate(
-            inputs_embeds=inputs_embeds.to("cuda"),
-            attention_mask=dec_attention_mask.to("cuda"),
+            inputs_embeds=inputs_embeds.to(device),
+            attention_mask=dec_attention_mask.to(device),
             do_sample=False,
             top_p=None,
             max_new_tokens=max_new_tokens,
